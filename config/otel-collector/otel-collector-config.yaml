@@ -1,0 +1,59 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+  # Ajoute des attributs à la ressource de toutes les données de télémétrie
+  resource:
+    attributes:
+      - key: collector.name
+        value: "serveurx"
+        action: upsert
+
+
+exporters:
+  # Pour le débogage : affiche les données reçues dans les logs du conteneur. (remplace l'ancien 'logging')
+  debug:
+    verbosity: detailed
+
+  # Exporte les métriques vers Prometheus via remote write
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+
+  # Exporte les traces vers Tempo vi OTLP/GRPC
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Exporte les logs vers Loki  vi OTLP/HTTP
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [debug, otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [debug, prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [debug, otlphttp/loki]
+  telemetry:
+    logs:
+      level: "info"

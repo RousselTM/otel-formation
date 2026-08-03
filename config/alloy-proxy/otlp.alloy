@@ -1,0 +1,68 @@
+// Réception venant de alloy-1
+otelcol.receiver.otlp "input" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+    cors {
+      allowed_origins = ["http://localhost:8090"]
+      allowed_headers = ["Content-Type", "X-Requested-With", "baggage", "traceparent"]
+    }
+  }
+
+  output {
+    metrics = [otelcol.exporter.file.local_archive_metrics.input, otelcol.exporter.prometheus.prometheus.input]
+    logs    = [otelcol.exporter.file.local_archive_logs.input, otelcol.exporter.loki.loki.input]
+    traces  = [otelcol.exporter.file.local_archive_traces.input, otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+// Conversion des logs OTLP vers le format Loki
+otelcol.exporter.loki "loki" {
+  forward_to = [loki.write.loki.receiver]
+}
+
+// Écriture vers Loki - Logs
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// Écriture dans des fichiers locaux - Métriques
+otelcol.exporter.file "local_archive_metrics" {
+  path = "/tmp/alloy-output/observability_metrics.json"
+}
+
+// Écriture dans des fichiers locaux - Logs
+otelcol.exporter.file "local_archive_logs" {
+  path = "/tmp/alloy-output/observability_logs.json"
+}
+
+// Écriture dans des fichiers locaux - Traces
+otelcol.exporter.file "local_archive_traces" {
+  path = "/tmp/alloy-output/observability_traces.json"
+}
+
+// Conversion des métriques OTLP vers le format Prometheus
+otelcol.exporter.prometheus "prometheus" {
+  forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+
+// Écriture vers Prometheus - Métriques
+prometheus.remote_write "prometheus" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// Écriture vers Tempo - Traces
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

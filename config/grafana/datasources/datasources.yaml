@@ -1,0 +1,42 @@
+# /home/lekpamartin/repos/formations/otel-formation/config/grafana/datasources/datasources.yaml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus-ds
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      exemplars:
+        - name: TraceID
+          url: '$${__value.raw}'
+          datasourceUid: tempo-ds
+
+  - name: Loki
+    type: loki
+    uid: loki-ds
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo-ds
+          matcherRegex: 'trace_id=([a-f0-9]{32})'
+          name: 'TraceID'
+          url: '$${__value.raw}'
+
+  - name: Tempo
+    type: tempo
+    uid: tempo-ds
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogs:
+        datasourceUid: 'loki-ds'
+        tags: ['job', 'instance', 'pod', 'namespace']
+        mappedTags: [{ key: 'service.name', value: 'job' }]
+        spanStartTimeShift: '1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: true
+        filterBySpanID: false

@@ -1,0 +1,109 @@
+services:
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6381:6379"
+
+  wildfly:
+    image: quay.io/wildfly/wildfly:latest
+    environment:
+      - OTEL_SERVICE_NAME=wildfly-app
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy-proxy:4317
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./app:/tmp/app
+    command: ["sh", "-c", "curl -sL -o /tmp/opentelemetry-javaagent.jar https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar && echo 'JAVA_OPTS=\"$$JAVA_OPTS -javaagent:/tmp/opentelemetry-javaagent.jar\"' >> /opt/jboss/wildfly/bin/standalone.conf && cp -R /tmp/app/. /opt/jboss/wildfly/standalone/deployments/ && touch /opt/jboss/wildfly/standalone/deployments/ROOT.war.dodeploy && /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0"]
+    ports:
+      - "8090:8080"
+    depends_on:
+      - redis
+
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./config/tempo/tempo.yaml:/etc/tempo.yaml
+    ports:
+      - "3200:3200"
+    depends_on:
+      - redpanda
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=grafanapassword
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel-collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      #- "4317:4317" # OTLP gRPC
+      - "13133:13133" # health_check
+      - "55679:55679" # zpages
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    ports:
+      - "8083:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+    depends_on:
+      - redpanda
+
+  alloy-proxy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./config/alloy-proxy:/etc/alloy/
+      - ./data:/tmp/alloy-output
+    command: run --server.http.listen-addr=0.0.0.0:12346 --storage.path=/var/lib/alloy/data --stability.level=public-preview /etc/alloy
+    ports:
+      - "12346:12346" # UI pour alloy-2
+      - "4317:4317" # OTLP - gRPC
+      - "4318:4318" # OTLP - HTTP
+    environment:
+      - ALLOY_DEPLOY_MODE=docker
